@@ -146,6 +146,7 @@ export default function IncomeSection({ submissionId, documents, onUpload, onDel
       foreign_employment_service_fee: nv(d.foreign.data?.employment_service_fee),
       foreign_business_income:        nv(d.foreign.data?.foreign_business_income),
       foreign_other:                  nv(d.foreign.data?.other_foreign_income),
+      foreign_tax_paid:               nv(d.foreign.data?.foreign_tax_paid),
       terminal_amount:                nv(d.terminal.data?.amount),
       terminal_benefit_types:         d.terminal.data?.benefit_types || '',
       rent_gross:                     nv(d.rent.data?.gross_amount),
@@ -190,7 +191,7 @@ export default function IncomeSection({ submissionId, documents, onUpload, onDel
     try {
       await Promise.all([
         api.post(`/tax/submissions/${submissionId}/income/local-employment/`,   { amount: data.local_amount || 0, employer_name: data.employer_name }),
-        api.post(`/tax/submissions/${submissionId}/income/foreign/`,            { employment_service_fee: data.foreign_employment_service_fee || 0, foreign_business_income: data.foreign_business_income || 0, other_foreign_income: data.foreign_other || 0 }),
+        api.post(`/tax/submissions/${submissionId}/income/foreign/`,            { employment_service_fee: data.foreign_employment_service_fee || 0, foreign_business_income: data.foreign_business_income || 0, other_foreign_income: data.foreign_other || 0, foreign_tax_paid: data.foreign_tax_paid || 0 }),
         api.post(`/tax/submissions/${submissionId}/income/terminal-benefit/`,   { amount: data.terminal_amount || 0, benefit_types: data.terminal_benefit_types }),
         api.post(`/tax/submissions/${submissionId}/income/rent/`,               { gross_amount: data.rent_gross || 0, wht_deducted: data.rent_wht || 0 }),
         api.post(`/tax/submissions/${submissionId}/income/interest/`,           { amount: data.interest_amount || 0, wht_deducted: data.interest_wht || 0 }),
@@ -269,6 +270,9 @@ export default function IncomeSection({ submissionId, documents, onUpload, onDel
               </FieldRow>
               <FieldRow label="Other Foreign Source Income" hint="Rent, interest, dividends from abroad">
                 <AmountInput name="foreign_other" control={controlIncome} disabled={isReadOnly} />
+              </FieldRow>
+              <FieldRow label="Foreign Tax Paid / WHT Credit" hint="Tax withheld or paid abroad; declared in Cage 901">
+                <AmountInput name="foreign_tax_paid" control={controlIncome} disabled={isReadOnly} />
               </FieldRow>
               <div className="pt-2">
                 <FileUpload label="Monthly Salary Slips / Foreign Evidence" documentType="monthly_salary_slip" section="income" {...fp} hint="Foreign employment evidence" />
