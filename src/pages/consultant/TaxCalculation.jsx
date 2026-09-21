@@ -15,6 +15,14 @@ import {
 } from 'lucide-react'
 import CashFlowSection from '../client/form-sections/CashFlowSection'
 
+const DISPOSAL_CATEGORY_OPTIONS = [
+  { value: 'land_building', label: 'Land / Building' },
+  { value: 'motor_vehicle', label: 'Motor Vehicle' },
+  { value: 'shares',        label: 'Shares / Securities' },
+  { value: 'other',         label: 'Other' },
+]
+const DISPOSAL_CATEGORY_LABELS = Object.fromEntries(DISPOSAL_CATEGORY_OPTIONS.map(c => [c.value, c.label]))
+
 function RsIcon({ size = 16, className = '' }) {
   return (
     <span
@@ -295,21 +303,14 @@ function EditableDataTable({ columns, rows, onEdit, onDelete, onAdd, addLabel = 
 
 /* ─── Mapping: section key → {endpoint, label, fields} ─── */
 const SECTION_FIELDS = {
-  local_employment: {
-    endpoint: id => `/tax/submissions/${id}/income/local-employment/`,
-    label: 'Local Employment Income',
-    fields: [
-      { key: 'amount', label: 'Gross Income (Rs.)', type: 'number' },
-      { key: 'employer_name', label: 'Employer Name', type: 'text' },
-      { key: 'notes', label: 'Notes', type: 'textarea' },
-    ],
-  },
   foreign_income: {
     endpoint: id => `/tax/submissions/${id}/income/foreign/`,
     label: 'Foreign Income',
     fields: [
+      { key: 'foreign_employer_name', label: 'Employer / Company Name', type: 'text' },
       { key: 'employment_service_fee', label: 'Employment / Service Fee (Rs.)', type: 'number' },
       { key: 'foreign_business_income', label: 'Business Income (Rs.)', type: 'number' },
+      { key: 'foreign_interest_income', label: 'Foreign Interest (Rs.)', type: 'number' },
       { key: 'other_foreign_income', label: 'Other Foreign Income (Rs.)', type: 'number' },
       { key: 'foreign_tax_paid', label: 'Foreign Tax Paid (Rs.)', type: 'number' },
       { key: 'notes', label: 'Notes', type: 'textarea' },
@@ -347,7 +348,8 @@ const SECTION_FIELDS = {
     label: 'Dividend Income',
     fields: [
       { key: 'amount', label: 'Taxable Dividends (Rs.)', type: 'number' },
-      { key: 'exempt_amount', label: 'Exempt Dividends — Resident Co. 15% WHT (Rs.)', type: 'number' },
+      { key: 'exempt_amount', label: 'Exempt Dividends — Gross, Final WHT (Rs.)', type: 'number' },
+      { key: 'final_wht', label: 'Final WHT on Exempt Dividends (Rs.)', type: 'number' },
       { key: 'notes', label: 'Notes', type: 'textarea' },
     ],
   },
@@ -413,6 +415,8 @@ const SECTION_FIELDS = {
     fields: [
       { key: 'apit_on_salary', label: 'APIT on Salary (Rs.)', type: 'number' },
       { key: 'partnership_tax_credit', label: 'Partnership Tax Credit (Rs.)', type: 'number' },
+      { key: 'wht_brought_forward', label: 'WHT Brought Forward (Rs.)', type: 'number' },
+      { key: 'refund_brought_forward', label: 'Tax Refund Claim — 60% from last Y/A (Rs.)', type: 'number' },
       { key: 'notes', label: 'Notes', type: 'textarea' },
     ],
   },
@@ -616,8 +620,10 @@ export default function TaxCalculation() {
     const sub = submission || {}
 
     // ── Income sources (mirrors ReviewSection + backend calculate_full_tax) ──
-    const localEmp  = parseFloat(sub.local_employment?.amount || 0)
+    const localEmp  = (sub.local_employments || []).reduce((s, lei) => s + parseFloat(lei.amount || 0), 0)
     const fi        = sub.foreign_income || {}
+    // Foreign Interest is exempt from tax — excluded from taxable foreign income
+    // (mirrors calculate_full_tax in tax_calculator.py).
     const foreignAmt = parseFloat(fi.employment_service_fee  || 0) +
                        parseFloat(fi.foreign_business_income || 0) +
                        parseFloat(fi.other_foreign_income    || 0)
@@ -630,8 +636,17 @@ export default function TaxCalculation() {
     const otherInc  = parseFloat(sub.other_income?.amount || 0)
     const tbSec     = parseFloat(sub.tb_securities?.gross_amount || 0)
 
+    // Capital gains — flat 15% on net gain from disposal of assets during the year.
+    // Motor vehicle disposals are excluded — personal-use motor vehicles are exempt
+    // from Capital Gains Tax (mirrors calculate_capital_gain_tax in tax_calculator.py).
+    const capitalGainNet = (sub.disposals || [])
+      .filter(d => d.category !== 'motor_vehicle')
+      .reduce((s, d) => s + parseFloat(d.sales_proceed || 0) - parseFloat(d.cost || 0), 0)
+    const capitalGain    = Math.max(0, capitalGainNet)
+    const capitalGainTax = Math.round(capitalGain * 0.15 * 100) / 100
+
     const computedTai = localEmp + foreignAmt + terminal + rentGross +
-                        interest + dividend + soleProp + otherInc + tbSec
+                        interest + dividend + soleProp + otherInc + tbSec + capitalGain
 
     // ── Qualifying payments ────────────────────────────────────────────────
     const donCharitable = parseFloat(sub.qualifying_payments?.donation_charitable || 0)
@@ -649,7 +664,10 @@ export default function TaxCalculation() {
 
     // Personal relief is applied to local (non-foreign) income first; any unused
     // balance then offsets foreign income (mirrors calculate_full_tax in tax_calculator.py).
-    const nonForeignIncome = tai - foreignAmt
+    // Capital gain is excluded here — it's taxed separately at a flat 15% via
+    // capitalGainTax, not at progressive slab rates (still counted in `tai` above
+    // for reporting purposes only).
+    const nonForeignIncome = tai - foreignAmt - capitalGain
     const localBase = Math.max(0, nonForeignIncome - qp - rr)
     const localReliefUsed = Math.min(pr, localBase)
     const taxableLocal = localBase - localReliefUsed
@@ -679,17 +697,60 @@ export default function TaxCalculation() {
       .filter(c => c.category !== 'rent' && c.category !== 'interest')
       .reduce((acc, c) => acc + parseFloat(c.amount || 0), 0)
     const partnership = parseFloat(sub.tax_credits?.partnership_tax_credit      || 0)
+    // NOTE: the old free-typed "Tax Refund Claim" field has been retired — the
+    // credit list's "Tax Refund Claim" is now just the display name for
+    // refundBroughtForward (60% of last Y/A's refund_carried_forward) below.
     const selfAssess  = (sub.self_assessment_payments || []).reduce((acc, p) => acc + parseFloat(p.amount || 0), 0)
-    const credits = apit + whtFromIncome + whtFromCerts + partnership + selfAssess
+    const whtBroughtForward = parseFloat(sub.tax_credits?.wht_brought_forward   || 0)
+    const refundBroughtForward = parseFloat(sub.tax_credits?.refund_brought_forward || 0)
 
     // ── Foreign income tax — progressive slabs capped at 15% ──────────────
     const foreignTaxPaid = parseFloat(fi.foreign_tax_paid || 0)
     const foreignTax = Math.max(0, computedForeignGross - foreignTaxPaid)
 
-    // ── Gross Tax = sum of slab-wise (local) tax + foreign tax ─────────────
-    const grossTax = grossTax_ + foreignTax
+    // ── Gross Tax (display total) = slab-wise (local) tax + foreign tax +
+    // capital gains tax. Display-only figure — the credit-application steps
+    // below use combinedGrossTax (local + foreign), matching calculate_full_tax
+    // in tax_calculator.py, so this change does not affect Balance Tax Payable. ─
+    const grossTax = grossTax_ + foreignTax + capitalGainTax
 
-    const netTax = Math.max(0, grossTax - credits)
+    // Combined tax base = local + foreign + Capital Gains Tax. CGT is added to
+    // the gross payable here, then also listed as a Step-1 credit below (per
+    // DPR instruction) so it is deducted back out — the two cancel, meaning
+    // CGT's net contribution to Balance Tax Payable is Rs. 0 once run through
+    // the credit steps. It is still shown on its own (flat 15% of Capital
+    // Gain) via derivedCalc.capital_gain_tax and the dedicated credit-list row.
+    // Credits are applied against this combined base, so a client whose income
+    // is mostly/entirely foreign still benefits from their APIT/WHT/self-
+    // assessment credits, instead of those credits being stranded against a
+    // small/zero local tax. Mirrors calculate_full_tax's combined_gross_tax.
+    // Step 1: combined tax reduced by non-WHT credits (APIT, Self-Assessment,
+    // Partnership, Tax Refund Claim, Capital Gains Tax, and — per DPR — the
+    // 60% Refund Brought Forward from last year), floored at zero.
+    // refundBroughtForward is ALREADY the 60% slice (only 60% of last year's
+    // refund_carried_forward is ever copied into it — the other 40% is never
+    // transferred at all, so it's inherently never claimable or carried
+    // forward any further).
+    // refundCarriedForward (THIS year's new carry-forward, itself reduced to
+    // 60% for next year) is computed from step1CreditsBase only — EXCLUDING
+    // refundBroughtForward — so any unused portion of this year's 60% claim
+    // does NOT itself spawn a further carry-forward next year. It's a
+    // one-time, use-it-or-lose-it claim.
+    // Step 2: what's left is reduced by WHT (this year's + brought-forward from last
+    // year). Any WHT left over becomes this year's carry-forward (→ next year's B/F).
+    const combinedGrossTax = grossTax_ + foreignTax + capitalGainTax
+    const step1CreditsBase = apit + partnership + selfAssess + capitalGainTax
+    const otherTaxCredits = step1CreditsBase + refundBroughtForward
+    const whtTotal = whtFromIncome + whtFromCerts + whtBroughtForward
+    const refundCarriedForward = Math.max(0, step1CreditsBase - combinedGrossTax)
+    const netAfterOtherCredits = Math.max(0, combinedGrossTax - otherTaxCredits)
+    const netAfterWht = netAfterOtherCredits - whtTotal
+    const whtCarriedForward = netAfterWht < 0 ? -netAfterWht : 0
+    const normalTax = netAfterWht < 0 ? 0 : netAfterWht
+    const whtUsed = whtTotal - whtCarriedForward
+    const credits = otherTaxCredits + whtUsed
+
+    const netTax = normalTax
 
     return {
       total_assessable_income:   tai,
@@ -708,6 +769,12 @@ export default function TaxCalculation() {
       wht_cert_all_total:        whtCertsAllTotal,
       self_assess_total:         selfAssess,
       total_tax_credits:         credits,
+      wht_brought_forward:       whtBroughtForward,
+      wht_carried_forward:       whtCarriedForward,
+      refund_brought_forward:    refundBroughtForward,
+      refund_carried_forward:    refundCarriedForward,
+      capital_gain:              capitalGain,
+      capital_gain_tax:          capitalGainTax,
       foreign_income_tax:        foreignTax,
       net_tax_payable:           netTax,
     }
@@ -928,21 +995,23 @@ export default function TaxCalculation() {
               onEdit={canEdit ? () => setEditingSection(editingSection ? null : 'income_multi') : null}
               editing={editingSection === 'income_multi'}>
 
-              {/* Local Employment */}
-              {(s?.local_employment || canEdit) && (
+              {/* Local Employment — up to 3 employers, multi-entry editable */}
+              {((s?.local_employments || []).length > 0 || canEdit) && (
                 <>
                   <SubHeading>Local Employment Income</SubHeading>
-                  {s?.local_employment && <>
-                    <Row label="Employer Name" value={s.local_employment.employer_name} />
-                    <AmountRow label="Gross Income" value={s.local_employment.amount} />
-                    {s.local_employment.notes && <Row label="Notes" value={s.local_employment.notes} />}
-                  </>}
-                  {canEdit && (editingSection === 'local_employment' ? (
-                    <SectionEditForm fields={SECTION_FIELDS.local_employment.fields} data={s?.local_employment}
-                      onSave={d => saveSection('local_employment', d)} onCancel={() => setEditingSection(null)} saving={sectionSaving} />
-                  ) : (
-                    <button onClick={() => setEditingSection('local_employment')} className="btn-ghost text-xs mt-1"><Pencil size={11} /> Edit</button>
-                  ))}
+                  <EditableDataTable
+                    columns={[
+                      { key: 'employer_name', label: 'Employer Name' },
+                      { key: 'amount', label: 'Gross Income', right: true, format: formatCurrency },
+                    ]}
+                    rows={s?.local_employments} canEdit={canEdit}
+                    onEdit={(id, data) => patchRow('income/local-employment', id, data)}
+                    onDelete={id => deleteRow('income/local-employment', id)}
+                    onAdd={() => (s?.local_employments || []).length >= 3
+                      ? toast.error('Maximum of 3 local employers allowed.')
+                      : addRow('income/local-employment/', { employer_name: '', amount: 0 })}
+                    addLabel="Add Employer"
+                  />
                 </>
               )}
 
@@ -951,9 +1020,15 @@ export default function TaxCalculation() {
                 <>
                   <SubHeading>Foreign Income</SubHeading>
                   {s?.foreign_income && <>
+                    {s.foreign_income.foreign_employer_name && (
+                      <Row label="Employer / Company Name" value={s.foreign_income.foreign_employer_name} />
+                    )}
                     <AmountRow label="Employment / Service Fee" value={s.foreign_income.employment_service_fee} />
                     {parseFloat(s.foreign_income.foreign_business_income || 0) > 0 && (
                       <AmountRow label="Business Income" value={s.foreign_income.foreign_business_income} />
+                    )}
+                    {parseFloat(s.foreign_income.foreign_interest_income || 0) > 0 && (
+                      <AmountRow label="Foreign Interest (Exempt — not included in Foreign Income total)" value={s.foreign_income.foreign_interest_income} />
                     )}
                     <AmountRow label="Other Foreign Income" value={s.foreign_income.other_foreign_income} />
                   </>}
@@ -1021,6 +1096,36 @@ export default function TaxCalculation() {
                 </>
               )}
 
+              {/* Capital Gain — Disposal of Assets, multi-entry, editable.
+                  Same records as the client's Income form / Assets step. */}
+              {((s?.disposals || []).length > 0 || canEdit) && (
+                <>
+                  <SubHeading>Capital Gain</SubHeading>
+                  <EditableDataTable
+                    columns={[
+                      { key: 'description', label: 'Description' },
+                      {
+                        key: 'category', label: 'Category',
+                        options: DISPOSAL_CATEGORY_OPTIONS,
+                        format: v => DISPOSAL_CATEGORY_LABELS[v] || v,
+                      },
+                      { key: 'date_of_disposal', label: 'Date of Disposal' },
+                      { key: 'sales_proceed', label: 'Sales Proceed', right: true, format: formatCurrency },
+                      { key: 'date_acquired', label: 'Date Acquired' },
+                      { key: 'cost', label: 'Cost', right: true, format: formatCurrency },
+                    ]}
+                    rows={s?.disposals} canEdit={canEdit}
+                    onEdit={(id, data) => patchRow('assets/disposals', id, data)}
+                    onDelete={id => deleteRow('assets/disposals', id)}
+                    onAdd={() => addRow('assets/disposals/', { description: '', category: 'other', date_of_disposal: null, sales_proceed: 0, date_acquired: null, cost: 0 })}
+                    addLabel="Add Disposal"
+                  />
+                  {derivedCalc.capital_gain > 0 && (
+                    <AmountRow label="Net Gain (from disposal of assets)" value={derivedCalc.capital_gain} />
+                  )}
+                </>
+              )}
+
               {/* Dividend Income */}
               {(s?.dividend_income?.amount > 0 || s?.dividend_income?.exempt_amount > 0 || canEdit) && (
                 <>
@@ -1029,8 +1134,14 @@ export default function TaxCalculation() {
                     <AmountRow label="Taxable Dividends" value={s.dividend_income.amount} />
                     {parseFloat(s.dividend_income.exempt_amount || 0) > 0 && (
                       <div className="flex justify-between items-center py-2 border-b border-brand-gray-border pl-4">
-                        <span className="text-sm text-brand-success">Exempt Dividends (15% WHT)</span>
+                        <span className="text-sm text-brand-success">Exempt Dividends (Gross)</span>
                         <span className="font-mono text-sm text-brand-success">{formatCurrency(s.dividend_income.exempt_amount)}</span>
+                      </div>
+                    )}
+                    {parseFloat(s.dividend_income.final_wht || 0) > 0 && (
+                      <div className="flex justify-between items-center py-2 border-b border-brand-gray-border pl-4">
+                        <span className="text-sm text-brand-success">Final WHT</span>
+                        <span className="font-mono text-sm text-brand-success">{formatCurrency(s.dividend_income.final_wht)}</span>
                       </div>
                     )}
                   </>}
@@ -1138,6 +1249,15 @@ export default function TaxCalculation() {
                   <>
                     <AmountRow label="APIT on Salary" value={s.tax_credits.apit_on_salary} />
                     <AmountRow label="Partnership Tax Credit" value={s.tax_credits.partnership_tax_credit} />
+                    <AmountRow label="WHT Brought Forward" value={s.tax_credits.wht_brought_forward} />
+                    {derivedCalc.wht_carried_forward > 0 && (
+                      <AmountRow label="WHT Carried Forward (to next Y/A)" value={derivedCalc.wht_carried_forward} />
+                    )}
+                    <AmountRow label="Tax Refund Claim (60% from last Y/A)" value={s.tax_credits.refund_brought_forward} />
+                    <div className="flex justify-between items-center py-2 border-b border-brand-gray-border last:border-0">
+                      <span className="text-sm text-brand-gray">Refund Carried Forward (60% to next Y/A)</span>
+                      <span className="font-mono text-sm text-white">{formatCurrency(derivedCalc.refund_carried_forward)}</span>
+                    </div>
                   </>
                 ) : <p className="text-xs text-brand-gray text-center">No tax credits entered</p>}
                 {editingSection === 'tax_credits' && (
@@ -1529,8 +1649,20 @@ export default function TaxCalculation() {
               <ComputedAmount label="Assessable Income" value={derivedCalc.total_assessable_income} />
               {derivedCalc.exempt_dividend_income > 0 && (
                 <div className="flex justify-between items-center py-1 pl-4">
-                  <span className="text-xs text-brand-gray italic">Exempt Dividend Income (15% WHT)</span>
+                  <span className="text-xs text-brand-gray italic">Exempt Dividend Income (Gross)</span>
                   <span className="text-xs text-brand-success font-mono">{formatCurrency(derivedCalc.exempt_dividend_income)}</span>
+                </div>
+              )}
+              {parseFloat(s?.foreign_income?.foreign_interest_income || 0) > 0 && (
+                <div className="flex justify-between items-center py-1 pl-4">
+                  <span className="text-xs text-brand-gray italic">Foreign Interest (Exempt — already excluded above, no further deduction)</span>
+                  <span className="text-xs text-brand-success font-mono">{formatCurrency(s.foreign_income.foreign_interest_income)}</span>
+                </div>
+              )}
+              {parseFloat(s?.dividend_income?.final_wht || 0) > 0 && (
+                <div className="flex justify-between items-center py-1 pl-4">
+                  <span className="text-xs text-brand-gray italic">Final WHT on Exempt Dividends</span>
+                  <span className="text-xs text-brand-success font-mono">{formatCurrency(s.dividend_income.final_wht)}</span>
                 </div>
               )}
               <ComputedAmount label="Less: Qualifying Pmts" value={derivedCalc.total_qualifying_payments} indent />
@@ -1541,6 +1673,7 @@ export default function TaxCalculation() {
               {/* Foreign Income Tax — progressive slabs, capped at 15% (read-only) */}
               {(() => {
                 const fi = s?.foreign_income || {}
+                // Foreign Interest is exempt — excluded from taxable foreign income here too.
                 const fiAmt = parseFloat(fi.employment_service_fee || 0) +
                               parseFloat(fi.foreign_business_income || 0) +
                               parseFloat(fi.other_foreign_income || 0)
@@ -1610,6 +1743,21 @@ export default function TaxCalculation() {
                 )
               })()}
 
+              {/* Capital Gains Tax — flat 15%, never reduced by credits (read-only) */}
+              <div className="mt-3 bg-brand-black-soft border border-brand-gray-border rounded-xl p-3">
+                <div className="flex items-center justify-between mb-2">
+                  <p className="text-xs text-brand-yellow font-semibold uppercase tracking-wider">Capital Gains Tax (flat 15%)</p>
+                </div>
+                <div className="flex justify-between items-center py-1 border-b border-brand-gray-border/50">
+                  <span className="text-xs text-brand-gray">Capital Gain (net, from disposal of assets)</span>
+                  <span className="text-xs font-mono text-white">{formatCurrency(derivedCalc.capital_gain)}</span>
+                </div>
+                <div className="flex justify-between items-center pt-1.5">
+                  <span className="text-xs font-semibold text-white">Capital Gains Tax Payable</span>
+                  <span className="text-xs font-mono font-bold text-brand-yellow">{formatCurrency(derivedCalc.capital_gain_tax)}</span>
+                </div>
+              </div>
+
               <div className="h-px bg-brand-gray-border my-3" />
 
               {/* Slab breakdown — live from derivedCalc */}
@@ -1641,6 +1789,10 @@ export default function TaxCalculation() {
                 </div>
               )}
 
+              <div className="flex justify-between items-center py-1.5 border-b border-brand-gray-border/60">
+                <span className="text-xs text-brand-gray">Capital Gains Tax (flat 15%)</span>
+                <span className="text-xs font-mono text-white">{formatCurrency(derivedCalc.capital_gain_tax)}</span>
+              </div>
               <ComputedAmount label="Gross Tax" value={derivedCalc.gross_tax} />
               <div className="h-px bg-brand-gray-border my-2" />
               {/* Tax credit lines — only from the Tax Credits section */}
@@ -1692,7 +1844,35 @@ export default function TaxCalculation() {
                   <span className="text-xs font-mono text-white">({formatCurrency(s.tax_credits.partnership_tax_credit)})</span>
                 </div>
               )}
+              {derivedCalc.capital_gain_tax > 0 && (
+                <div className="flex justify-between items-center py-1.5 pl-4 border-b border-brand-gray-border/60">
+                  <span className="text-xs text-brand-gray">Capital Gains Tax</span>
+                  <span className="text-xs font-mono text-white">({formatCurrency(derivedCalc.capital_gain_tax)})</span>
+                </div>
+              )}
+              {derivedCalc.refund_brought_forward > 0 && (
+                <div className="flex justify-between items-center py-1.5 pl-4 border-b border-brand-gray-border/60">
+                  <span className="text-xs text-brand-gray">Tax Refund Claim (60% from last Y/A)</span>
+                  <span className="text-xs font-mono text-white">({formatCurrency(derivedCalc.refund_brought_forward)})</span>
+                </div>
+              )}
+              {derivedCalc.wht_brought_forward > 0 && (
+                <div className="flex justify-between items-center py-1.5 pl-4 border-b border-brand-gray-border/60">
+                  <span className="text-xs text-brand-gray">WHT Brought Forward (from last Y/A)</span>
+                  <span className="text-xs font-mono text-white">({formatCurrency(derivedCalc.wht_brought_forward)})</span>
+                </div>
+              )}
               <ComputedAmount label="Less: Total Tax Credits" value={derivedCalc.total_tax_credits} indent />
+              {derivedCalc.wht_carried_forward > 0 && (
+                <div className="flex justify-between items-center py-1.5 pl-4 border-b border-brand-gray-border/60">
+                  <span className="text-xs text-brand-gray">WHT Carried Forward (to next Y/A)</span>
+                  <span className="text-xs font-mono text-white">{formatCurrency(derivedCalc.wht_carried_forward)}</span>
+                </div>
+              )}
+              <div className="flex justify-between items-center py-1.5 pl-4 border-b border-brand-gray-border/60">
+                <span className="text-xs text-brand-gray">Refund Carried Forward (60% to next Y/A)</span>
+                <span className="text-xs font-mono text-white">{formatCurrency(derivedCalc.refund_carried_forward)}</span>
+              </div>
 
               <div className="mt-4 bg-brand-yellow/10 border border-brand-yellow/30 rounded-xl p-4">
                 <p className="text-xs text-brand-gray uppercase tracking-wider mb-2">BALANCE TAX PAYABLE</p>

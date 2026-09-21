@@ -14,7 +14,9 @@ export default function ReviewSection({ submissionId, submission, documents, onP
   const qc = useQueryClient()
   const [confirmed, setConfirmed] = useState(false)
 
-  const localEmp        = D(submission?.local_employment?.amount)
+  const localEmp        = (submission?.local_employments || []).reduce((s, lei) => s + D(lei.amount), 0)
+  // Foreign Interest is exempt from tax — excluded from taxable foreign income
+  // (mirrors calculate_full_tax in tax_calculator.py).
   const foreign         = D(submission?.foreign_income?.employment_service_fee)
                         + D(submission?.foreign_income?.foreign_business_income)
                         + D(submission?.foreign_income?.other_foreign_income)
@@ -25,7 +27,8 @@ export default function ReviewSection({ submissionId, submission, documents, onP
   const soleProp        = (submission?.sole_proprietorships || []).reduce((s, sp) => s + D(sp.amount), 0)
   const otherInc        = D(submission?.other_income?.amount)
   const tbSecurities    = D(submission?.tb_securities?.gross_amount)
-  const totalAssessable = localEmp + foreign + terminal + rentGross + interest + dividendTaxable + soleProp + otherInc + tbSecurities
+  const capitalGain     = Math.max(0, (submission?.disposals || []).reduce((s, d) => s + D(d.sales_proceed) - D(d.cost), 0))
+  const totalAssessable = localEmp + foreign + terminal + rentGross + interest + dividendTaxable + soleProp + otherInc + tbSecurities + capitalGain
 
   const submitMutation = useMutation({
     mutationFn: () => api.post(`/tax/submissions/${submissionId}/submit/`),
@@ -91,6 +94,9 @@ export default function ReviewSection({ submissionId, submission, documents, onP
           )}
           {interest > 0 && (
             <SummaryRow label="Interest Income" value={formatCurrency(interest)} />
+          )}
+          {capitalGain > 0 && (
+            <SummaryRow label="Capital Gain (from disposal of assets)" value={formatCurrency(capitalGain)} />
           )}
           {dividendTaxable > 0 && (
             <SummaryRow label="Dividend Income" value={formatCurrency(dividendTaxable)} />

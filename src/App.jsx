@@ -35,6 +35,7 @@ import SuperAdminClientList from './pages/superadmin/ClientList'
 import ConsultantManagement from './pages/superadmin/ConsultantManagement'
 import AccountsManagement from './pages/superadmin/AccountsManagement'
 import TaxYears from './pages/superadmin/TaxYears'
+import Messages from './pages/superadmin/Messages'
 
 export default function App() {
   return (
@@ -88,6 +89,7 @@ export default function App() {
           <Route element={<ProtectedRoute role="super_admin" />}>
             <Route element={<SuperAdminLayout />}>
               <Route path="/super-admin/dashboard" element={<SuperAdminDashboard />} />
+              <Route path="/super-admin/messages" element={<Messages />} />
               <Route path="/super-admin/clients" element={<SuperAdminClientList />} />
               <Route path="/super-admin/clients/register" element={<RegisterClient />} />
               <Route path="/super-admin/consultants" element={<ConsultantManagement />} />

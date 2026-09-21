@@ -11,6 +11,10 @@ const fmt = (v) => Math.round(D(v)).toLocaleString('en-LK')
 
 // Fields whose values are auto-populated from Assets / Liabilities records.
 // They show an "auto" badge and refresh when source records change, but remain editable.
+// Note: receipt_bank_loan ("Bank Loan Received") is intentionally NOT in this set —
+// it still shows the auto-suggested value as a starting point (via the standard
+// saved-value-wins fallback below), but a saved edit is no longer overwritten by the
+// live suggestion on every reload.
 const LINKED_SCALARS = new Set([
   'payment_purchase_land_building',
   'payment_purchase_motor_vehicle',
@@ -18,7 +22,6 @@ const LINKED_SCALARS = new Set([
   'payment_investment_shares',
   'receipt_debtor_received',
   'payment_loans_given_others',
-  'receipt_bank_loan',
   'payment_repayment_bank_loan',
   'receipt_sale_land_building',
   'receipt_sale_motor_vehicle',
@@ -257,13 +260,15 @@ export default function CashFlowSection({ submissionId, isReadOnly, onNext, onPr
         const sugArr   = Array.isArray(sg) ? sg : []
         return savedArr.length > 0 ? savedArr : sugArr
       }
-      // Fields sourced from Assets / Liabilities always follow the live computed value
+      // Fields sourced from Assets / Liabilities always follow the live computed value.
+      // A computed 0 is a real, meaningful value (e.g. nothing bought this year) and
+      // must still display — only null/blank/NaN means "no value".
       if (LINKED_SCALARS.has(k)) {
-        const sugOk = sg != null && sg !== '' && !isNaN(parseFloat(sg)) && parseFloat(sg) !== 0
+        const sugOk = sg != null && sg !== '' && !isNaN(parseFloat(sg))
         return sugOk ? String(sg) : ''
       }
-      const savedOk = sv != null && sv !== '' && !isNaN(parseFloat(sv)) && parseFloat(sv) !== 0
-      const sugOk   = sg != null && sg !== '' && !isNaN(parseFloat(sg)) && parseFloat(sg) !== 0
+      const savedOk = sv != null && sv !== '' && !isNaN(parseFloat(sv))
+      const sugOk   = sg != null && sg !== '' && !isNaN(parseFloat(sg))
       if (savedOk) return String(sv)
       if (sugOk)   return String(sg)
       return ''

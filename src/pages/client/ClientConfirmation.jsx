@@ -315,8 +315,12 @@ export default function ClientConfirmation() {
     const s = submission
     const num = v => parseFloat(v || 0)
 
+    // Foreign Interest is exempt from tax — excluded from taxable foreign income
+    // (mirrors calculate_full_tax in tax_calculator.py).
     const foreignTotal = num(s.foreign_income?.employment_service_fee) +
-      num(s.foreign_income?.foreign_business_income) + num(s.foreign_income?.other_foreign_income)
+      num(s.foreign_income?.foreign_business_income) +
+      num(s.foreign_income?.other_foreign_income)
+    const capitalGain = Math.max(0, (s.disposals || []).reduce((a, d) => a + num(d.sales_proceed) - num(d.cost), 0))
     const selfAssessTotal = (s.self_assessment_payments || []).reduce((a, p) => a + num(p.amount), 0)
     const soleWhtTotal = (s.sole_proprietorships || []).reduce((a, sp) => a + num(sp.wht_deducted), 0)
     const otherWhtCertsTotal = (s.wht_certificates || [])
@@ -422,18 +426,25 @@ export default function ClientConfirmation() {
 
           {/* A. Income Sources */}
           <SecLabel label="A. Income Sources" />
-          <LineRow label="Employment Income"            value={s.local_employment?.amount} />
+          <LineRow label="Employment Income"            value={(s.local_employments || []).reduce((a, lei) => a + num(lei.amount), 0)} />
           <LineRow label="Foreign Income"               value={foreignTotal} />
           <LineRow label="Terminal Benefit"             value={s.terminal_benefit?.amount} />
           <LineRow label="Rent Income (Gross)"          value={s.rent_income?.gross_amount} />
           <LineRow label="Interest Income"              value={s.interest_income?.amount} />
+          <LineRow label="Capital Gain (from disposal of assets)" value={capitalGain} />
           <LineRow label="Dividend Income (Taxable)"    value={s.dividend_income?.amount} />
           {(s.sole_proprietorships || []).map((sp, i) => (
             <LineRow key={sp.id ?? i} label={sp.business_name ? `Business Income — ${sp.business_name}` : 'Sole Proprietorship Income'} value={sp.amount} />
           ))}
           <LineRow label="Other Income"                 value={s.other_income?.amount} />
+          {num(s.foreign_income?.foreign_interest_income) > 0 && (
+            <LineRow label="Foreign Interest (Exempt, excluded from tax)" value={s.foreign_income.foreign_interest_income} dimmed />
+          )}
           {num(s.dividend_income?.exempt_amount) > 0 && (
-            <LineRow label="Exempt Dividend Income (excluded from tax)" value={s.dividend_income.exempt_amount} dimmed />
+            <LineRow label="Exempt Dividend Income (Gross, excluded from tax)" value={s.dividend_income.exempt_amount} dimmed />
+          )}
+          {num(s.dividend_income?.final_wht) > 0 && (
+            <LineRow label="Final WHT on Exempt Dividends" value={s.dividend_income.final_wht} dimmed />
           )}
           <SubBar label="Total Assessable Income" value={s.total_assessable_income} />
 
@@ -461,6 +472,15 @@ export default function ClientConfirmation() {
             </>
           )}
 
+          {/* Capital Gains Tax — flat 15%, never reduced by credits */}
+          {capitalGain > 0 && (
+            <>
+              <SecLabel label="Capital Gains Tax (flat 15%)" />
+              <LineRow label="Capital Gain (net, from disposal of assets)" value={capitalGain} />
+              <LineRow label="Capital Gains Tax"          value={s.capital_gain_tax} />
+            </>
+          )}
+
           {/* D. Tax Slab Breakdown */}
           {s.slab_breakdown?.length > 0 && (
             <>
@@ -475,8 +495,10 @@ export default function ClientConfirmation() {
           )}
           {num(s.gross_tax) > 0 && <SubBar label="Gross Tax" value={s.gross_tax} />}
 
-          {/* E. Tax Credits */}
-          {num(s.total_tax_credits) > 0 && (
+          {/* E. Tax Credits — also shown when credits are fully carried forward to next
+              Y/A (total_tax_credits nets to 0 in that case, but the credit itself must
+              still be visible, not hidden as if it vanished) */}
+          {(num(s.total_tax_credits) > 0 || num(s.wht_carried_forward) > 0 || num(s.refund_carried_forward) > 0) && (
             <>
               <SecLabel label="E. Tax Credits" />
               <LineRow label="APIT on Salary"            value={s.tax_credits?.apit_on_salary} deduction />
@@ -486,6 +508,9 @@ export default function ClientConfirmation() {
               <LineRow label="WHT on T-Bills / Securities" value={s.tb_securities?.wht_deducted} deduction />
               <LineRow label="WHT Certificates (Service Fees / Other)" value={otherWhtCertsTotal} deduction />
               <LineRow label="Partnership Tax Credit"    value={s.tax_credits?.partnership_tax_credit} deduction />
+              <LineRow label="Capital Gains Tax"          value={s.capital_gain_tax} deduction />
+              <LineRow label="Tax Refund Claim (60% from last Y/A)" value={s.tax_credits?.refund_brought_forward} deduction />
+              <LineRow label="WHT Brought Forward (from last Y/A)" value={s.tax_credits?.wht_brought_forward} deduction />
               {selfAssessTotal > 0 && (
                 <div className="flex justify-between items-center py-1.5 border-b border-brand-gray-border/50 pl-3">
                   <span className="text-sm text-brand-gray">Self-Assessment Payments</span>
@@ -493,6 +518,8 @@ export default function ClientConfirmation() {
                 </div>
               )}
               <SubBar label="Total Tax Credits" value={s.total_tax_credits} />
+              <LineRow label="WHT Carried Forward (to next Y/A)" value={s.wht_carried_forward} />
+              <LineRow label="Refund Carried Forward (60% to next Y/A)" value={s.refund_carried_forward} />
             </>
           )}
 
