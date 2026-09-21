@@ -108,7 +108,6 @@ export default function IncomeSection({ submissionId, documents, onUpload, onDel
   const qc = useQueryClient()
 
   const queries = {
-    local:    useQuery({ queryKey: ['income-local',    submissionId], queryFn: () => api.get(`/tax/submissions/${submissionId}/income/local-employment/`).then(r => r.data) }),
     foreign:  useQuery({ queryKey: ['income-foreign',  submissionId], queryFn: () => api.get(`/tax/submissions/${submissionId}/income/foreign/`).then(r => r.data) }),
     terminal: useQuery({ queryKey: ['income-terminal', submissionId], queryFn: () => api.get(`/tax/submissions/${submissionId}/income/terminal-benefit/`).then(r => r.data) }),
     rent:     useQuery({ queryKey: ['income-rent',     submissionId], queryFn: () => api.get(`/tax/submissions/${submissionId}/income/rent/`).then(r => r.data) }),
@@ -141,10 +140,10 @@ export default function IncomeSection({ submissionId, documents, onUpload, onDel
     // nv: converts 0 / "0" / "0.00" to '' so fields appear empty rather than showing "0"
     const nv = v => (v == null || v === '' || parseFloat(v) === 0) ? '' : v
     resetIncome({
-      local_amount:                   nv(d.local.data?.amount),
-      employer_name:                  d.local.data?.employer_name || '',
+      foreign_employer_name:          d.foreign.data?.foreign_employer_name || '',
       foreign_employment_service_fee: nv(d.foreign.data?.employment_service_fee),
       foreign_business_income:        nv(d.foreign.data?.foreign_business_income),
+      foreign_interest:               nv(d.foreign.data?.foreign_interest_income),
       foreign_other:                  nv(d.foreign.data?.other_foreign_income),
       foreign_tax_paid:               nv(d.foreign.data?.foreign_tax_paid),
       terminal_amount:                nv(d.terminal.data?.amount),
@@ -155,6 +154,7 @@ export default function IncomeSection({ submissionId, documents, onUpload, onDel
       interest_wht:                   nv(d.interest.data?.wht_deducted),
       dividend_amount:                nv(d.dividend.data?.amount),
       dividend_exempt_amount:         nv(d.dividend.data?.exempt_amount),
+      dividend_final_wht:             nv(d.dividend.data?.final_wht),
       tb_gross:                       nv(d.tb.data?.gross_amount),
       tb_wht:                         nv(d.tb.data?.wht_deducted),
       other_amount:                   nv(d.other.data?.amount),
@@ -177,6 +177,8 @@ export default function IncomeSection({ submissionId, documents, onUpload, onDel
       apit_on_salary:            nv(queries.tc.data?.apit_on_salary),
       wht_rent_interest_service: nv(queries.tc.data?.wht_rent_interest_service),
       partnership_tax_credit:    nv(queries.tc.data?.partnership_tax_credit),
+      wht_brought_forward:       nv(queries.tc.data?.wht_brought_forward),
+      refund_brought_forward:    nv(queries.tc.data?.refund_brought_forward),
     })
   }, [queries.tc.data])
 
@@ -190,12 +192,11 @@ export default function IncomeSection({ submissionId, documents, onUpload, onDel
     setSaving(true)
     try {
       await Promise.all([
-        api.post(`/tax/submissions/${submissionId}/income/local-employment/`,   { amount: data.local_amount || 0, employer_name: data.employer_name }),
-        api.post(`/tax/submissions/${submissionId}/income/foreign/`,            { employment_service_fee: data.foreign_employment_service_fee || 0, foreign_business_income: data.foreign_business_income || 0, other_foreign_income: data.foreign_other || 0, foreign_tax_paid: data.foreign_tax_paid || 0 }),
+        api.post(`/tax/submissions/${submissionId}/income/foreign/`,            { foreign_employer_name: data.foreign_employer_name || '', employment_service_fee: data.foreign_employment_service_fee || 0, foreign_business_income: data.foreign_business_income || 0, foreign_interest_income: data.foreign_interest || 0, other_foreign_income: data.foreign_other || 0, foreign_tax_paid: data.foreign_tax_paid || 0 }),
         api.post(`/tax/submissions/${submissionId}/income/terminal-benefit/`,   { amount: data.terminal_amount || 0, benefit_types: data.terminal_benefit_types }),
         api.post(`/tax/submissions/${submissionId}/income/rent/`,               { gross_amount: data.rent_gross || 0, wht_deducted: data.rent_wht || 0 }),
         api.post(`/tax/submissions/${submissionId}/income/interest/`,           { amount: data.interest_amount || 0, wht_deducted: data.interest_wht || 0 }),
-        api.post(`/tax/submissions/${submissionId}/income/dividend/`,           { amount: data.dividend_amount || 0, exempt_amount: data.dividend_exempt_amount || 0 }),
+        api.post(`/tax/submissions/${submissionId}/income/dividend/`,           { amount: data.dividend_amount || 0, exempt_amount: data.dividend_exempt_amount || 0, final_wht: data.dividend_final_wht || 0 }),
         api.post(`/tax/submissions/${submissionId}/income/tb-securities/`,     { gross_amount: data.tb_gross || 0, wht_deducted: data.tb_wht || 0 }),
         api.post(`/tax/submissions/${submissionId}/income/other/`,              { amount: data.other_amount || 0, description: data.other_description }),
       ])
@@ -225,6 +226,8 @@ export default function IncomeSection({ submissionId, documents, onUpload, onDel
         apit_on_salary:            data.apit_on_salary || 0,
         wht_rent_interest_service: data.wht_rent_interest_service || 0,
         partnership_tax_credit:    data.partnership_tax_credit || 0,
+        wht_brought_forward:       data.wht_brought_forward || 0,
+        refund_brought_forward:    data.refund_brought_forward || 0,
       })
       toast.success('Tax credits saved')
     } catch { toast.error('Failed to save') }
@@ -247,13 +250,8 @@ export default function IncomeSection({ submissionId, documents, onUpload, onDel
 
             {/* Local Employment */}
             <SubSection icon={Briefcase} title="Local Employment">
-              <FieldRow label="Employer Name">
-                <input {...regIncome('employer_name')} className="input-field" placeholder="Company / Employer name" disabled={isReadOnly} />
-              </FieldRow>
-              <FieldRow label="Employment Income" hint="Total gross salary for the year">
-                <AmountInput name="local_amount" control={controlIncome} disabled={isReadOnly} />
-              </FieldRow>
-              <div className="pt-2">
+              <LocalEmploymentEntries submissionId={submissionId} isReadOnly={isReadOnly} />
+              <div className="pt-3">
                 <FileUpload label="T10 / Salary Slips" documentType="t10_salary_slip" section="income" {...fp} hint="Required" />
               </div>
             </SubSection>
@@ -262,13 +260,19 @@ export default function IncomeSection({ submissionId, documents, onUpload, onDel
 
             {/* Foreign Income */}
             <SubSection icon={Globe} title="Foreign Income">
+              <FieldRow label="Employer / Company Name" hint="Name of the foreign employer or company paying the income">
+                <input {...regIncome('foreign_employer_name')} className="input-field" placeholder="Company / Employer name" disabled={isReadOnly} />
+              </FieldRow>
               <FieldRow label="Employment / Service Fee" hint="Foreign employment or contract income">
                 <AmountInput name="foreign_employment_service_fee" control={controlIncome} disabled={isReadOnly} />
               </FieldRow>
               <FieldRow label="Foreign Business Income" hint="Profit from business carried on outside Sri Lanka">
                 <AmountInput name="foreign_business_income" control={controlIncome} disabled={isReadOnly} />
               </FieldRow>
-              <FieldRow label="Other Foreign Source Income" hint="Rent, interest, dividends from abroad">
+              <FieldRow label="Foreign Interest (Exempt Interest)" hint="Interest earned on foreign bank deposits / investments — exempt from tax">
+                <AmountInput name="foreign_interest" control={controlIncome} disabled={isReadOnly} />
+              </FieldRow>
+              <FieldRow label="Other Foreign Source Income" hint="Rent, dividends from abroad">
                 <AmountInput name="foreign_other" control={controlIncome} disabled={isReadOnly} />
               </FieldRow>
               <FieldRow label="Foreign Tax Paid / WHT Credit" hint="Tax withheld or paid abroad; declared in Cage 901">
@@ -353,17 +357,35 @@ export default function IncomeSection({ submissionId, documents, onUpload, onDel
 
             <Divider />
 
+            {/* Capital Gain — disposals entered/edited here, same records shown in the
+                Assets step (section 10). Net gain is auto-calculated, taxed at flat 15%. */}
+            <SubSection icon={TrendingUp} title="Capital Gain">
+              <DisposalEntries submissionId={submissionId} isReadOnly={isReadOnly} />
+            </SubSection>
+
+            <Divider />
+
             {/* Dividend Income */}
             <SubSection icon={TrendingUp} title="Dividend Income">
               <FieldRow label="Taxable Dividends" hint="Dividends not subject to 15% WHT">
                 <AmountInput name="dividend_amount" control={controlIncome} disabled={isReadOnly} />
               </FieldRow>
               <FieldRow
-                label="Exempt Dividends"
-                hint="From resident companies subject to 15% WHT — these are tax exempt and excluded from assessable income"
+                label="Exempt Dividends (Gross)"
+                hint="Gross dividends from resident companies subject to final WHT — tax exempt and excluded from assessable income"
               >
                 <AmountInput
                   name="dividend_exempt_amount" control={controlIncome}
+                  disabled={isReadOnly}
+                  className="border-brand-success/40 focus:border-brand-success"
+                />
+              </FieldRow>
+              <FieldRow
+                label="Final WHT"
+                hint="Actual WHT deducted on the exempt dividends above, per the dividend certificate"
+              >
+                <AmountInput
+                  name="dividend_final_wht" control={controlIncome}
                   disabled={isReadOnly}
                   className="border-brand-success/40 focus:border-brand-success"
                 />
@@ -541,8 +563,14 @@ export default function IncomeSection({ submissionId, documents, onUpload, onDel
                   )}
                 </div>
               </FieldRow>
+              <FieldRow label="WHT Brought Forward" hint="Unused WHT credit carried forward from last Y/A">
+                <AmountInput name="wht_brought_forward" control={controlTC} disabled={isReadOnly} />
+              </FieldRow>
               <FieldRow label="Partnership Tax Credit" hint="Tax credit passed through from partnership">
                 <AmountInput name="partnership_tax_credit" control={controlTC} disabled={isReadOnly} />
+              </FieldRow>
+              <FieldRow label="Tax Refund Claim" hint="60% of last Y/A's unused refund entitlement, carried forward from last Y/A">
+                <AmountInput name="refund_brought_forward" control={controlTC} disabled={isReadOnly} />
               </FieldRow>
             </SubSection>
 
@@ -566,6 +594,395 @@ export default function IncomeSection({ submissionId, documents, onUpload, onDel
         </button>
       </div>
 
+    </div>
+  )
+}
+
+
+/* ─── Local Employment multi-entry sub-component (unlimited employers) ─── */
+function LocalEmploymentEntries({ submissionId, isReadOnly }) {
+  const qc = useQueryClient()
+  const { data: entries = [], refetch } = useQuery({
+    queryKey: ['income-local-employments', submissionId],
+    queryFn:  () => api.get(`/tax/submissions/${submissionId}/income/local-employment/`).then(r => r.data),
+  })
+
+  const [modal, setModal] = useState(null) // null | { mode: 'add' } | { mode: 'edit', entry }
+  const [form, setForm] = useState({ employer_name: '', amount: '' })
+  const [saving, setSaving] = useState(false)
+
+  function openAdd() {
+    setForm({ employer_name: '', amount: '' })
+    setModal({ mode: 'add' })
+  }
+
+  function openEdit(entry) {
+    setForm({ employer_name: entry.employer_name || '', amount: entry.amount || '' })
+    setModal({ mode: 'edit', entry })
+  }
+
+  async function handleSave() {
+    setSaving(true)
+    try {
+      const payload = {
+        employer_name: form.employer_name,
+        amount: parseFloat(form.amount) || 0,
+      }
+      if (modal.mode === 'add') {
+        await api.post(`/tax/submissions/${submissionId}/income/local-employment/`, payload)
+      } else {
+        await api.patch(`/tax/income/local-employment/${modal.entry.id}/`, payload)
+      }
+      await refetch()
+      qc.invalidateQueries(['income-local-employments', submissionId])
+      setModal(null)
+      toast.success(modal.mode === 'add' ? 'Employer income added' : 'Employer income updated')
+    } catch { toast.error('Failed to save') }
+    setSaving(false)
+  }
+
+  async function handleDelete(entry) {
+    try {
+      await api.delete(`/tax/income/local-employment/${entry.id}/`)
+      await refetch()
+      qc.invalidateQueries(['income-local-employments', submissionId])
+      toast.success('Removed')
+    } catch { toast.error('Failed to delete') }
+  }
+
+  const fmt = v => Math.round(parseFloat(v || 0)).toLocaleString('en-LK')
+
+  return (
+    <div className="space-y-3">
+      {entries.length > 0 && (
+        <div className="border border-brand-gray-border rounded-lg overflow-hidden">
+          <table className="w-full text-sm">
+            <thead className="bg-brand-black">
+              <tr>
+                <th className="text-left px-3 py-2 text-xs text-brand-gray font-medium">Employer Name</th>
+                <th className="text-right px-3 py-2 text-xs text-brand-gray font-medium">Income (Rs.)</th>
+                {!isReadOnly && <th className="w-16" />}
+              </tr>
+            </thead>
+            <tbody>
+              {entries.map((e, idx) => (
+                <tr key={e.id} className={idx % 2 === 0 ? 'bg-brand-black/20' : ''}>
+                  <td className="px-3 py-2 text-white">{e.employer_name || '—'}</td>
+                  <td className="px-3 py-2 text-right font-mono text-white">{fmt(e.amount)}</td>
+                  {!isReadOnly && (
+                    <td className="px-2 py-2">
+                      <div className="flex gap-1 justify-end">
+                        <button type="button" onClick={() => openEdit(e)} className="p-1 rounded hover:bg-brand-gray/10 text-brand-gray hover:text-white transition-colors">
+                          <Pencil size={13} />
+                        </button>
+                        <button type="button" onClick={() => handleDelete(e)} className="p-1 rounded hover:bg-brand-red/10 text-brand-gray hover:text-brand-red transition-colors">
+                          <Trash2 size={13} />
+                        </button>
+                      </div>
+                    </td>
+                  )}
+                </tr>
+              ))}
+            </tbody>
+            {entries.length > 1 && (
+              <tfoot className="border-t border-brand-gray-border bg-brand-black">
+                <tr>
+                  <td className="px-3 py-2 text-xs text-brand-gray font-semibold">Total</td>
+                  <td className="px-3 py-2 text-right font-mono text-brand-yellow text-xs font-semibold">
+                    {fmt(entries.reduce((s, e) => s + parseFloat(e.amount || 0), 0))}
+                  </td>
+                  {!isReadOnly && <td />}
+                </tr>
+              </tfoot>
+            )}
+          </table>
+        </div>
+      )}
+
+      {!isReadOnly && (
+        <button type="button" onClick={openAdd} className="flex items-center gap-1.5 text-sm text-brand-yellow hover:text-brand-yellow/80 transition-colors font-medium">
+          <Plus size={14} /> Add Employer {entries.length > 0 && `(${entries.length})`}
+        </button>
+      )}
+
+      {entries.length === 0 && isReadOnly && (
+        <p className="text-sm text-brand-gray">No employment income entered.</p>
+      )}
+
+      {/* Modal */}
+      {modal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+          <div className="bg-brand-black-light border border-brand-gray-border rounded-2xl w-full max-w-md p-6 space-y-4">
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-semibold text-white">{modal.mode === 'add' ? 'Add Employer Income' : 'Edit Employer Income'}</h3>
+              <button type="button" onClick={() => setModal(null)} className="text-brand-gray hover:text-white transition-colors">
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className="space-y-3">
+              <div>
+                <label className="text-xs text-brand-gray mb-1 block font-medium">Employer Name</label>
+                <input
+                  className="input-field"
+                  placeholder="Company / Employer name"
+                  value={form.employer_name}
+                  onChange={e => setForm(f => ({ ...f, employer_name: e.target.value }))}
+                />
+              </div>
+              <div>
+                <label className="text-xs text-brand-gray mb-1 block font-medium">Employment Income (Rs.)</label>
+                <div className="relative">
+                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-brand-gray text-sm font-mono">Rs.</span>
+                  <input
+                    type="number"
+                    className="input-field pl-10 text-right font-mono"
+                    placeholder=""
+                    value={form.amount}
+                    onChange={e => setForm(f => ({ ...f, amount: e.target.value }))}
+                  />
+                </div>
+                <p className="text-xs text-brand-gray mt-1">Total gross salary for the year, from this employer</p>
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-3 pt-2">
+              <button type="button" onClick={() => setModal(null)} className="btn-secondary text-sm">Cancel</button>
+              <button type="button" onClick={handleSave} disabled={saving} className="btn-primary text-sm">
+                <Check size={14} /> {saving ? 'Saving…' : modal.mode === 'add' ? 'Add' : 'Update'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+
+/* ─── Disposal of Assets (Capital Gain) multi-entry sub-component ───
+   Same records as Assets step, section 10 "Disposal of Assets including Shares
+   During the Year" — editable from either place, single source of truth. */
+const DISPOSAL_CATEGORIES = [
+  { value: 'land_building', label: 'Land / Building' },
+  { value: 'motor_vehicle', label: 'Motor Vehicle' },
+  { value: 'shares',        label: 'Shares / Securities' },
+  { value: 'other',         label: 'Other' },
+]
+const DISPOSAL_CATEGORY_LABELS = Object.fromEntries(DISPOSAL_CATEGORIES.map(c => [c.value, c.label]))
+const DISPOSAL_DEFAULTS = { description: '', category: 'other', date_of_disposal: '', sales_proceed: '', date_acquired: '', cost: '' }
+
+function DisposalEntries({ submissionId, isReadOnly }) {
+  const qc = useQueryClient()
+  const { data: entries = [], refetch } = useQuery({
+    queryKey: ['assets-disposals', submissionId],
+    queryFn:  () => api.get(`/tax/submissions/${submissionId}/assets/disposals/`).then(r => r.data),
+  })
+
+  const [modal, setModal] = useState(null) // null | { mode: 'add' } | { mode: 'edit', entry }
+  const [form, setForm] = useState(DISPOSAL_DEFAULTS)
+  const [saving, setSaving] = useState(false)
+
+  function openAdd() {
+    setForm(DISPOSAL_DEFAULTS)
+    setModal({ mode: 'add' })
+  }
+
+  function openEdit(entry) {
+    setForm({
+      description: entry.description || '',
+      category: entry.category || 'other',
+      date_of_disposal: entry.date_of_disposal || '',
+      sales_proceed: entry.sales_proceed || '',
+      date_acquired: entry.date_acquired || '',
+      cost: entry.cost || '',
+    })
+    setModal({ mode: 'edit', entry })
+  }
+
+  async function handleSave() {
+    setSaving(true)
+    try {
+      const payload = {
+        description: form.description,
+        category: form.category,
+        date_of_disposal: form.date_of_disposal || null,
+        sales_proceed: parseFloat(form.sales_proceed) || 0,
+        date_acquired: form.date_acquired || null,
+        cost: parseFloat(form.cost) || 0,
+      }
+      if (modal.mode === 'add') {
+        await api.post(`/tax/submissions/${submissionId}/assets/disposals/`, payload)
+      } else {
+        await api.patch(`/tax/assets/disposals/${modal.entry.id}/`, payload)
+      }
+      await refetch()
+      qc.invalidateQueries(['assets-disposals', submissionId])
+      qc.invalidateQueries(['disposals', submissionId]) // keep Assets step's own query in sync
+      setModal(null)
+      toast.success(modal.mode === 'add' ? 'Disposal added' : 'Disposal updated')
+    } catch { toast.error('Failed to save') }
+    setSaving(false)
+  }
+
+  async function handleDelete(entry) {
+    try {
+      await api.delete(`/tax/assets/disposals/${entry.id}/`)
+      await refetch()
+      qc.invalidateQueries(['assets-disposals', submissionId])
+      qc.invalidateQueries(['disposals', submissionId])
+      toast.success('Removed')
+    } catch { toast.error('Failed to delete') }
+  }
+
+  const fmt = v => Math.round(parseFloat(v || 0)).toLocaleString('en-LK')
+  // Net gain across all disposals, floored once at the end (mirrors
+  // calculate_capital_gain_tax in tax_calculator.py) — not per-row flooring.
+  const netGain = Math.max(0, entries.reduce(
+    (s, e) => s + parseFloat(e.sales_proceed || 0) - parseFloat(e.cost || 0), 0
+  ))
+
+  return (
+    <div className="space-y-3">
+      {entries.length > 0 && (
+        <div className="border border-brand-gray-border rounded-lg overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead className="bg-brand-black">
+              <tr>
+                <th className="text-left px-3 py-2 text-xs text-brand-gray font-medium">Description</th>
+                <th className="text-left px-3 py-2 text-xs text-brand-gray font-medium">Category</th>
+                <th className="text-left px-3 py-2 text-xs text-brand-gray font-medium">Date of Disposal</th>
+                <th className="text-right px-3 py-2 text-xs text-brand-gray font-medium">Sales Proceed (Rs.)</th>
+                <th className="text-left px-3 py-2 text-xs text-brand-gray font-medium">Date Acquired</th>
+                <th className="text-right px-3 py-2 text-xs text-brand-gray font-medium">Cost (Rs.)</th>
+                {!isReadOnly && <th className="w-16" />}
+              </tr>
+            </thead>
+            <tbody>
+              {entries.map((e, idx) => (
+                <tr key={e.id} className={idx % 2 === 0 ? 'bg-brand-black/20' : ''}>
+                  <td className="px-3 py-2 text-white whitespace-nowrap">{e.description || '—'}</td>
+                  <td className="px-3 py-2 text-brand-gray whitespace-nowrap">{DISPOSAL_CATEGORY_LABELS[e.category] || e.category}</td>
+                  <td className="px-3 py-2 text-brand-gray whitespace-nowrap">{e.date_of_disposal || '—'}</td>
+                  <td className="px-3 py-2 text-right font-mono text-white">{fmt(e.sales_proceed)}</td>
+                  <td className="px-3 py-2 text-brand-gray whitespace-nowrap">{e.date_acquired || '—'}</td>
+                  <td className="px-3 py-2 text-right font-mono text-white">{fmt(e.cost)}</td>
+                  {!isReadOnly && (
+                    <td className="px-2 py-2">
+                      <div className="flex gap-1 justify-end">
+                        <button type="button" onClick={() => openEdit(e)} className="p-1 rounded hover:bg-brand-gray/10 text-brand-gray hover:text-white transition-colors">
+                          <Pencil size={13} />
+                        </button>
+                        <button type="button" onClick={() => handleDelete(e)} className="p-1 rounded hover:bg-brand-red/10 text-brand-gray hover:text-brand-red transition-colors">
+                          <Trash2 size={13} />
+                        </button>
+                      </div>
+                    </td>
+                  )}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {!isReadOnly && (
+        <button type="button" onClick={openAdd} className="flex items-center gap-1.5 text-sm text-brand-yellow hover:text-brand-yellow/80 transition-colors font-medium">
+          <Plus size={14} /> Add Disposal {entries.length > 0 && `(${entries.length})`}
+        </button>
+      )}
+
+      {entries.length === 0 && isReadOnly && (
+        <p className="text-sm text-brand-gray">No disposals entered.</p>
+      )}
+
+      <div className="py-1">
+        <ReliefPill
+          label="Capital Gain (net — auto calculated, taxed separately at flat 15%)"
+          value={`Rs. ${Math.round(netGain).toLocaleString('en-LK')}`}
+        />
+      </div>
+
+      {/* Modal */}
+      {modal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+          <div className="bg-brand-black-light border border-brand-gray-border rounded-2xl w-full max-w-md p-6 space-y-4">
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-semibold text-white">{modal.mode === 'add' ? 'Add Disposal' : 'Edit Disposal'}</h3>
+              <button type="button" onClick={() => setModal(null)} className="text-brand-gray hover:text-white transition-colors">
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className="space-y-3">
+              <div>
+                <label className="text-xs text-brand-gray mb-1 block font-medium">Description</label>
+                <input
+                  className="input-field"
+                  placeholder="e.g. Sale of vehicle, shares, property..."
+                  value={form.description}
+                  onChange={e => setForm(f => ({ ...f, description: e.target.value }))}
+                />
+              </div>
+              <div>
+                <label className="text-xs text-brand-gray mb-1 block font-medium">Category</label>
+                <select
+                  className="input-field"
+                  value={form.category}
+                  onChange={e => setForm(f => ({ ...f, category: e.target.value }))}
+                >
+                  {DISPOSAL_CATEGORIES.map(c => (
+                    <option key={c.value} value={c.value}>{c.label}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs text-brand-gray mb-1 block font-medium">Date of Disposal</label>
+                  <input
+                    type="date" className="input-field"
+                    value={form.date_of_disposal}
+                    onChange={e => setForm(f => ({ ...f, date_of_disposal: e.target.value }))}
+                  />
+                </div>
+                <div>
+                  <label className="text-xs text-brand-gray mb-1 block font-medium">Date Acquired</label>
+                  <input
+                    type="date" className="input-field"
+                    value={form.date_acquired}
+                    onChange={e => setForm(f => ({ ...f, date_acquired: e.target.value }))}
+                  />
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs text-brand-gray mb-1 block font-medium">Sales Proceed (Rs.)</label>
+                  <input
+                    type="number" className="input-field text-right font-mono"
+                    value={form.sales_proceed}
+                    onChange={e => setForm(f => ({ ...f, sales_proceed: e.target.value }))}
+                  />
+                </div>
+                <div>
+                  <label className="text-xs text-brand-gray mb-1 block font-medium">Cost (Rs.)</label>
+                  <input
+                    type="number" className="input-field text-right font-mono"
+                    value={form.cost}
+                    onChange={e => setForm(f => ({ ...f, cost: e.target.value }))}
+                  />
+                </div>
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-3 pt-2">
+              <button type="button" onClick={() => setModal(null)} className="btn-secondary text-sm">Cancel</button>
+              <button type="button" onClick={handleSave} disabled={saving} className="btn-primary text-sm">
+                <Check size={14} /> {saving ? 'Saving…' : modal.mode === 'add' ? 'Add' : 'Update'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
