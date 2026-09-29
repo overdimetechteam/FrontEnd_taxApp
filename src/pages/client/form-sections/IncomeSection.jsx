@@ -774,10 +774,13 @@ const DISPOSAL_DEFAULTS = { description: '', category: 'other', date_of_disposal
 
 function DisposalEntries({ submissionId, isReadOnly }) {
   const qc = useQueryClient()
-  const { data: entries = [], refetch } = useQuery({
+  const { data: allEntries = [], refetch } = useQuery({
     queryKey: ['assets-disposals', submissionId],
     queryFn:  () => api.get(`/tax/submissions/${submissionId}/assets/disposals/`).then(r => r.data),
   })
+  // Only disposals added here (Income section) — the Assets step's "Disposal of
+  // Assets" table (section 10) shows all disposals, including these.
+  const entries = allEntries.filter(e => e.is_capital_gain)
 
   const [modal, setModal] = useState(null) // null | { mode: 'add' } | { mode: 'edit', entry }
   const [form, setForm] = useState(DISPOSAL_DEFAULTS)
@@ -812,7 +815,7 @@ function DisposalEntries({ submissionId, isReadOnly }) {
         cost: parseFloat(form.cost) || 0,
       }
       if (modal.mode === 'add') {
-        await api.post(`/tax/submissions/${submissionId}/assets/disposals/`, payload)
+        await api.post(`/tax/submissions/${submissionId}/assets/disposals/`, { ...payload, is_capital_gain: true })
       } else {
         await api.patch(`/tax/assets/disposals/${modal.entry.id}/`, payload)
       }
@@ -836,11 +839,6 @@ function DisposalEntries({ submissionId, isReadOnly }) {
   }
 
   const fmt = v => Math.round(parseFloat(v || 0)).toLocaleString('en-LK')
-  // Net gain across all disposals, floored once at the end (mirrors
-  // calculate_capital_gain_tax in tax_calculator.py) — not per-row flooring.
-  const netGain = Math.max(0, entries.reduce(
-    (s, e) => s + parseFloat(e.sales_proceed || 0) - parseFloat(e.cost || 0), 0
-  ))
 
   return (
     <div className="space-y-3">
@@ -895,13 +893,6 @@ function DisposalEntries({ submissionId, isReadOnly }) {
       {entries.length === 0 && isReadOnly && (
         <p className="text-sm text-brand-gray">No disposals entered.</p>
       )}
-
-      <div className="py-1">
-        <ReliefPill
-          label="Capital Gain (net — auto calculated, taxed separately at flat 15%)"
-          value={`Rs. ${Math.round(netGain).toLocaleString('en-LK')}`}
-        />
-      </div>
 
       {/* Modal */}
       {modal && (

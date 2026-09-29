@@ -320,7 +320,7 @@ export default function ClientConfirmation() {
     const foreignTotal = num(s.foreign_income?.employment_service_fee) +
       num(s.foreign_income?.foreign_business_income) +
       num(s.foreign_income?.other_foreign_income)
-    const capitalGain = Math.max(0, (s.disposals || []).reduce((a, d) => a + num(d.sales_proceed) - num(d.cost), 0))
+    const capitalGain = Math.max(0, (s.disposals || []).filter(d => d.is_capital_gain).reduce((a, d) => a + num(d.sales_proceed) - num(d.cost), 0))
     const selfAssessTotal = (s.self_assessment_payments || []).reduce((a, p) => a + num(p.amount), 0)
     const soleWhtTotal = (s.sole_proprietorships || []).reduce((a, sp) => a + num(sp.wht_deducted), 0)
     const otherWhtCertsTotal = (s.wht_certificates || [])

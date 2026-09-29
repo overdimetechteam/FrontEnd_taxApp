@@ -231,7 +231,7 @@ function EditableDataTable({ columns, rows, onEdit, onDelete, onAdd, addLabel = 
         <table className="w-full text-xs">
           <thead>
             <tr className="bg-brand-black">
-              {columns.map(c => <th key={c.key} className={`table-header py-2 text-xs ${c.right ? 'text-right' : 'text-left'}`}>{c.label}</th>)}
+              {columns.map(c => <th key={c.key} className={`table-header py-2 text-xs whitespace-nowrap ${c.right ? 'text-right' : 'text-left'}`}>{c.label}</th>)}
               {canEdit && <th className="table-header py-2 w-16 text-center">Edit</th>}
             </tr>
           </thead>
@@ -240,7 +240,7 @@ function EditableDataTable({ columns, rows, onEdit, onDelete, onAdd, addLabel = 
               editingId === row.id ? (
                 <tr key={row.id || i} className="bg-brand-yellow/5">
                   {columns.map(c => (
-                    <td key={c.key} className="table-cell py-1">
+                    <td key={c.key} className="table-cell py-1 min-w-[130px]">
                       {c.right ? (
                         <NumberInput
                           value={editDraft[c.key] ?? ''}
@@ -275,7 +275,7 @@ function EditableDataTable({ columns, rows, onEdit, onDelete, onAdd, addLabel = 
               ) : (
                 <tr key={row.id || i} className="table-row">
                   {columns.map(c => (
-                    <td key={c.key} className={`table-cell py-2 text-xs ${c.right ? 'text-right font-mono' : ''}`}>
+                    <td key={c.key} className={`table-cell py-2 text-xs whitespace-nowrap ${c.right ? 'text-right font-mono' : ''}`}>
                       {c.format ? c.format(row[c.key]) : (row[c.displayKey || c.key] || '—')}
                     </td>
                   ))}
@@ -636,17 +636,22 @@ export default function TaxCalculation() {
     const otherInc  = parseFloat(sub.other_income?.amount || 0)
     const tbSec     = parseFloat(sub.tb_securities?.gross_amount || 0)
 
-    // Capital gains — flat 15% on net gain from disposal of assets during the year.
-    // Motor vehicle disposals are excluded — personal-use motor vehicles are exempt
-    // from Capital Gains Tax (mirrors calculate_capital_gain_tax in tax_calculator.py).
+    // Capital gains — flat 15% on net gain from Income-section "Capital Gain"
+    // disposal entries only (mirrors calculate_capital_gain_tax in tax_calculator.py).
+    // Assets-section-only disposals (is_capital_gain=false) are excluded.
     const capitalGainNet = (sub.disposals || [])
-      .filter(d => d.category !== 'motor_vehicle')
+      .filter(d => d.is_capital_gain)
       .reduce((s, d) => s + parseFloat(d.sales_proceed || 0) - parseFloat(d.cost || 0), 0)
     const capitalGain    = Math.max(0, capitalGainNet)
     const capitalGainTax = Math.round(capitalGain * 0.15 * 100) / 100
 
+    // Capital gain is intentionally excluded from this tab's Assessable/Taxable
+    // Income display (and everywhere else in this page's live preview) — it's
+    // taxed separately at flat 15% via capitalGainTax below. This is a display-only
+    // choice for this tab; the backend (tax_calculator.py) and PDF still include
+    // it in Total Assessable Income for official reporting.
     const computedTai = localEmp + foreignAmt + terminal + rentGross +
-                        interest + dividend + soleProp + otherInc + tbSec + capitalGain
+                        interest + dividend + soleProp + otherInc + tbSec
 
     // ── Qualifying payments ────────────────────────────────────────────────
     const donCharitable = parseFloat(sub.qualifying_payments?.donation_charitable || 0)
@@ -664,16 +669,17 @@ export default function TaxCalculation() {
 
     // Personal relief is applied to local (non-foreign) income first; any unused
     // balance then offsets foreign income (mirrors calculate_full_tax in tax_calculator.py).
-    // Capital gain is excluded here — it's taxed separately at a flat 15% via
-    // capitalGainTax, not at progressive slab rates (still counted in `tai` above
-    // for reporting purposes only).
-    const nonForeignIncome = tai - foreignAmt - capitalGain
+    // capitalGain is already excluded from `tai` above, so no further subtraction is needed here.
+    const nonForeignIncome = tai - foreignAmt
     const localBase = Math.max(0, nonForeignIncome - qp - rr)
     const localReliefUsed = Math.min(pr, localBase)
     const taxableLocal = localBase - localReliefUsed
     const remainingRelief = pr - localReliefUsed
     const taxableForeign = Math.max(0, foreignAmt - remainingRelief)
-    const netTaxable = taxableLocal + taxableForeign
+    // Capital gain is added back in here — excluded from the progressive slab
+    // calc below, but included in the reported Taxable Income figure itself
+    // (mirrors tax_calculator.py).
+    const netTaxable = taxableLocal + taxableForeign + capitalGain
 
     // ── Progressive slab tax — local fills slabs first; foreign fills the rest,
     // capped at 15% ─────────────────────────────────────────────────────────
@@ -788,6 +794,9 @@ export default function TaxCalculation() {
   )
 
   const s = submission
+  // Only disposals added via the Income section's "Capital Gain" table — the
+  // Assets section's "Disposals During the Year" table shows all disposals.
+  const capitalGainDisposals = (s?.disposals || []).filter(d => d.is_capital_gain)
   // Super admin can edit even after the return has been confirmed and archived.
   const canEdit = s?.status !== 'archived' || user?.role === 'super_admin'
   const canConfirm = ['submitted', 'under_review', 'info_requested', 'draft'].includes(s?.status)
@@ -1097,8 +1106,11 @@ export default function TaxCalculation() {
               )}
 
               {/* Capital Gain — Disposal of Assets, multi-entry, editable.
-                  Same records as the client's Income form / Assets step. */}
-              {((s?.disposals || []).length > 0 || canEdit) && (
+                  Entries added here are flagged is_capital_gain=true, so they also
+                  show up (read/reporting-only) in the Assets step's "Disposals During
+                  the Year" table, but entries added there don't show up here and are
+                  never taxed. */}
+              {(capitalGainDisposals.length > 0 || canEdit) && (
                 <>
                   <SubHeading>Capital Gain</SubHeading>
                   <EditableDataTable
@@ -1114,10 +1126,10 @@ export default function TaxCalculation() {
                       { key: 'date_acquired', label: 'Date Acquired' },
                       { key: 'cost', label: 'Cost', right: true, format: formatCurrency },
                     ]}
-                    rows={s?.disposals} canEdit={canEdit}
+                    rows={capitalGainDisposals} canEdit={canEdit}
                     onEdit={(id, data) => patchRow('assets/disposals', id, data)}
                     onDelete={id => deleteRow('assets/disposals', id)}
-                    onAdd={() => addRow('assets/disposals/', { description: '', category: 'other', date_of_disposal: null, sales_proceed: 0, date_acquired: null, cost: 0 })}
+                    onAdd={() => addRow('assets/disposals/', { description: '', category: 'other', date_of_disposal: null, sales_proceed: 0, date_acquired: null, cost: 0, is_capital_gain: true })}
                     addLabel="Add Disposal"
                   />
                   {derivedCalc.capital_gain > 0 && (
@@ -1565,7 +1577,7 @@ export default function TaxCalculation() {
                       rows={s?.disposals} canEdit={canEdit}
                       onEdit={(id, data) => patchRow('assets/disposals', id, data)}
                       onDelete={id => deleteRow('assets/disposals', id)}
-                      onAdd={() => addRow('assets/disposals/', { description: '', sales_proceed: 0, cost: 0 })}
+                      onAdd={() => addRow('assets/disposals/', { description: '', sales_proceed: 0, cost: 0, is_capital_gain: false })}
                     />
                   </div>
                 )}
@@ -1789,10 +1801,6 @@ export default function TaxCalculation() {
                 </div>
               )}
 
-              <div className="flex justify-between items-center py-1.5 border-b border-brand-gray-border/60">
-                <span className="text-xs text-brand-gray">Capital Gains Tax (flat 15%)</span>
-                <span className="text-xs font-mono text-white">{formatCurrency(derivedCalc.capital_gain_tax)}</span>
-              </div>
               <ComputedAmount label="Gross Tax" value={derivedCalc.gross_tax} />
               <div className="h-px bg-brand-gray-border my-2" />
               {/* Tax credit lines — only from the Tax Credits section */}

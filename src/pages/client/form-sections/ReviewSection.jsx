@@ -27,7 +27,7 @@ export default function ReviewSection({ submissionId, submission, documents, onP
   const soleProp        = (submission?.sole_proprietorships || []).reduce((s, sp) => s + D(sp.amount), 0)
   const otherInc        = D(submission?.other_income?.amount)
   const tbSecurities    = D(submission?.tb_securities?.gross_amount)
-  const capitalGain     = Math.max(0, (submission?.disposals || []).reduce((s, d) => s + D(d.sales_proceed) - D(d.cost), 0))
+  const capitalGain     = Math.max(0, (submission?.disposals || []).filter(d => d.is_capital_gain).reduce((s, d) => s + D(d.sales_proceed) - D(d.cost), 0))
   const totalAssessable = localEmp + foreign + terminal + rentGross + interest + dividendTaxable + soleProp + otherInc + tbSecurities + capitalGain
 
   const submitMutation = useMutation({
