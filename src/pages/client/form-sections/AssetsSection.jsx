@@ -163,7 +163,9 @@ const CATEGORIES = [
   {
     key: 'disposals', label: '10.  Disposal of Assets including Shares During the Year',
     endpoint: 'disposals', queryKey: 'disposals',
-    defaults: { description: '', category: 'other', date_of_disposal: '', sales_proceed: '', date_acquired: '', cost: '' },
+    // Entries added here are reporting-only (not taxed) and never appear in the
+    // Income section's "Capital Gain" table — see is_capital_gain on the model.
+    defaults: { description: '', category: 'other', date_of_disposal: '', sales_proceed: '', date_acquired: '', cost: '', is_capital_gain: false },
     fields: [
       { key: 'description', label: 'Description', type: 'text' },
       {

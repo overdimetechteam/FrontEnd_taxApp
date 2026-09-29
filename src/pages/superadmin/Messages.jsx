@@ -15,9 +15,9 @@ const MESSAGE_STATUS_COLORS = {
   cancelled: 'bg-brand-black-soft text-brand-gray',
 }
 
-// Mirrors ScheduledMessageCreateSerializer on the backend (MAX_RECIPIENTS,
-// SYNC_SEND_THRESHOLD). Backend is authoritative — these are for UI copy only.
-const RECIPIENT_CAP = 300
+// Mirrors ScheduledMessageCreateSerializer.SYNC_SEND_THRESHOLD on the backend
+// (there is no cap on recipient count — sends are batched into eSMS campaigns
+// of up to 1000 at a time). For UI copy only; backend is authoritative.
 const SYNC_SEND_THRESHOLD = 50
 
 const MESSAGE_STATUS_LABELS = {
@@ -133,7 +133,7 @@ export default function Messages() {
     onError: (err) => toast.error(err.response?.data?.error || 'Failed to cancel'),
   })
 
-  const canSubmit = selectedIds.length > 0 && selectedIds.length <= RECIPIENT_CAP &&
+  const canSubmit = selectedIds.length > 0 &&
     (sendEmail || sendSms) &&
     (!sendEmail || (emailSubject.trim() && emailBody.trim())) &&
     (!sendSms || smsBody.trim())
@@ -147,11 +147,6 @@ export default function Messages() {
           <div className="flex items-center justify-between mb-3">
             <h3 className="font-semibold text-white">
               Recipients ({selectedIds.length} selected)
-              {selectedIds.length > RECIPIENT_CAP && (
-                <span className="block text-xs font-normal text-brand-red mt-0.5">
-                  Max {RECIPIENT_CAP} recipients per send — remove {selectedIds.length - RECIPIENT_CAP} to continue
-                </span>
-              )}
             </h3>
             <div className="flex items-center gap-2">
               <button
